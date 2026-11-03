@@ -85,23 +85,3 @@ class ArbolBST:
             self._inorden_recursivo(nodo_actual.izquierda)
             print(f"  -> {nodo_actual.evento}")
             self._inorden_recursivo(nodo_actual.derecha)
-
-
-# Bloque de prueba individual para Luis
-if __name__ == "__main__":
-    arbol = ArbolBST()
-    # Crear eventos de prueba
-    e1 = Evento(102, "Concierto Rock", 500, "Escenario Principal")
-    e2 = Evento(101, "Taller de Python", 50, "Aula Magna")
-    e3 = Evento(105, "Feria de Ciencias", 200, "Plaza Central")
-
-    arbol.insertar(e1)
-    arbol.insertar(e2)
-    arbol.insertar(e3)
-
-    print("--- Recorrido In-Orden (Catálogo Ordenado por ID) ---")
-    arbol.recorrido_inorden()
-
-    print("\n--- Búsqueda de evento ID 105 ---")
-    encontrado = arbol.buscar(105)
-    print("Resultado:", encontrado)
