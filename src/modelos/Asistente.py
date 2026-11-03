@@ -7,7 +7,7 @@ class Asistente:
     def __init__(self, cedula, nombre, categoria="General"):
         """
         Constructor de la clase Asistente.
-        
+
         :param cedula: Documento de identidad único (str o int).
         :param nombre: Nombre completo del participante (str).
         :param categoria: Tipo de acreditación, ej. 'General', 'VIP', 'Organizador' (str).
@@ -32,7 +32,10 @@ class Asistente:
         """
         if isinstance(otro, Asistente):
             return self.cedula == otro.cedula
-        elif isinstance(otro, (str, int)):
+        # CORRECCION: antes se usaba isinstance(otro, (str, int)), pero ese
+        # (str, int) es una tupla y el proyecto las prohibe. Se reemplaza por
+        # dos comprobaciones separadas, con el mismo resultado.
+        elif isinstance(otro, str) or isinstance(otro, int):
             return self.cedula == str(otro)
         return False
 
