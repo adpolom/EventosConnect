@@ -108,19 +108,3 @@ class ListaDoblementeEnlazada:
         while actual is not None:
             print(f"  [<-] {actual.evento} [->]")
             actual = actual.anterior
-
-
-# Bloque de prueba individual para Luis
-if __name__ == "__main__":
-    lista = ListaDoblementeEnlazada()
-    e1 = Evento(101, "Apertura y Registro", 100, "Auditorio Principal")
-    e2 = Evento(102, "Ponencia IA", 150, "Sala 1")
-    e3 = Evento(103, "Cierre y Premiación", 200, "Auditorio Principal")
-
-    lista.insertar_final(e1)
-    lista.insertar_final(e2)
-    lista.insertar_final(e3)
-
-    lista.mostrar_adelante()
-    print()
-    lista.mostrar_atras()
