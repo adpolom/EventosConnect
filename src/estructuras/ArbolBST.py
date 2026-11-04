@@ -85,3 +85,48 @@ class ArbolBST:
             self._inorden_recursivo(nodo_actual.izquierda)
             print(f"  -> {nodo_actual.evento}")
             self._inorden_recursivo(nodo_actual.derecha)
+
+    def eliminar(self, id_evento: int) -> bool:
+        """
+        Elimina un evento del catálogo BST por su id_evento.
+        Retorna True si fue eliminado, o False si no existía.
+        """
+        if self.buscar(id_evento) is None:
+            return False
+        self.raiz = self._eliminar_recursivo(self.raiz, id_evento)
+        return True
+
+    def _eliminar_recursivo(self, nodo_actual: NodoArbol, id_evento: int):
+        if nodo_actual is None:
+            return None
+
+        if id_evento < nodo_actual.evento.id_evento:
+            nodo_actual.izquierda = self._eliminar_recursivo(nodo_actual.izquierda, id_evento)
+        elif id_evento > nodo_actual.evento.id_evento:
+            nodo_actual.derecha = self._eliminar_recursivo(nodo_actual.derecha, id_evento)
+        else:
+            # Caso 1: Nodo hoja (sin hijos)
+            if nodo_actual.izquierda is None and nodo_actual.derecha is None:
+                return None
+
+            # Caso 2: Nodo con un solo hijo
+            if nodo_actual.izquierda is None:
+                return nodo_actual.derecha
+            if nodo_actual.derecha is None:
+                return nodo_actual.izquierda
+
+            # Caso 3: Nodo con dos hijos (reemplazo por el sucesor in-orden: el menor del subárbol derecho)
+            sucesor = self._encontrar_minimo(nodo_actual.derecha)
+            nodo_actual.evento = sucesor.evento
+            nodo_actual.derecha = self._eliminar_recursivo(nodo_actual.derecha, sucesor.evento.id_evento)
+
+        return nodo_actual
+
+    def _encontrar_minimo(self, nodo_actual: NodoArbol) -> NodoArbol:
+        """Auxiliar para encontrar el nodo con el menor id_evento en un subárbol."""
+        actual = nodo_actual
+        while actual.izquierda is not None:
+            actual = actual.izquierda
+        return actual
+
+
