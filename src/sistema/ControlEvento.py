@@ -25,7 +25,7 @@ from src.estructuras.ListaEnlazada import ListaEnlazada
 from src.estructuras.Cola import Cola
 from src.estructuras.Pila import Pila
 from src.estructuras.ArbolBST import ArbolBST
-from src.estructuras.ListaDoblementeEnlazada import ListaDoblementeEnlazada
+from src.estructuras.ListaDoblementeEnlazada import ListaDoblementeEnlazada, NodoDoble
 
 
 def a_entero(valor):
@@ -52,6 +52,36 @@ def a_entero(valor):
         return None
 
 
+def normalizar_hora(texto):
+    """
+    Valida una hora en formato 24 horas y la devuelve siempre como "HH:MM".
+    Devuelve None si no es una hora válida.
+
+    Ejemplos:
+        normalizar_hora("8:00")  -> "08:00"
+        normalizar_hora("14:30") -> "14:30"
+        normalizar_hora("25:00") -> None
+
+    Se devuelve con dos dígitos a propósito: así las horas se pueden
+    comparar como texto ("08:00" < "14:00") y la agenda queda en orden.
+    """
+    texto = str(texto).strip()
+    # Se ubica el ":" y se corta el texto en dos partes (sin usar split,
+    # que crearía una lista; el proyecto no permite listas de Python).
+    pos = texto.find(":")
+    if pos == -1 or texto.find(":", pos + 1) != -1:
+        return None                    # no tiene ":" o tiene más de uno
+    texto_horas = texto[:pos]
+    texto_minutos = texto[pos + 1:]
+    horas = a_entero(texto_horas)
+    minutos = a_entero(texto_minutos)
+    if horas is None or minutos is None or len(texto_minutos.strip()) != 2:
+        return None
+    if horas < 0 or horas > 23 or minutos < 0 or minutos > 59:
+        return None
+    return str(horas).zfill(2) + ":" + str(minutos).zfill(2)
+
+
 class Resultado:
     """
     Objeto que devuelve cada operación del sistema para decir cómo le fue.
@@ -72,6 +102,26 @@ class Resultado:
         self.dato = dato          # Objeto involucrado (Asistente o Evento), si aplica
 
 
+class Turno:
+    """
+    Lo que se guarda en la fila (Cola) y en la bitácora (Pila):
+    QUIÉN entra (el Asistente) y A QUÉ EVENTO entra.
+
+    Hace falta guardar los dos juntos para el control de aforo: al dar
+    ingreso hay que saber a qué evento se le descuenta un cupo, y al
+    deshacer hay que saber a qué evento se le devuelve.
+    """
+    def __init__(self, asistente, evento):
+        self.asistente = asistente
+        self.evento = evento
+
+    def __str__(self):
+        # Así se ve cada turno cuando se imprime la fila o la bitácora.
+        return (self.asistente.nombre + " (" + self.asistente.cedula + ") -> evento "
+                + str(self.evento.id_evento) + " " + self.evento.nombre
+                + " a las " + self.evento.hora)
+
+
 class ControlEvento:
     """
     Controlador central de EventosConnect.
@@ -79,10 +129,10 @@ class ControlEvento:
     de modo que Main.py solo se encarga de pedir datos y mostrar resultados.
 
       - padron    (ListaEnlazada)           : asistentes inscritos
-      - fila      (Cola)                    : personas esperando en el torniquete (FIFO)
-      - bitacora  (Pila)                    : ingresos registrados, permite deshacer (LIFO)
+      - fila      (Cola)                    : turnos esperando en el torniquete (FIFO)
+      - bitacora  (Pila)                    : turnos que ya ingresaron, permite deshacer (LIFO)
       - catalogo  (ArbolBST)                : todos los eventos, indexados por id_evento
-      - agenda    (ListaDoblementeEnlazada) : eventos programados, navegable en ambos sentidos
+      - agenda    (ListaDoblementeEnlazada) : eventos programados, ordenados por hora
     """
     def __init__(self):
         # Al crear el controlador se crean las 5 estructuras, todas vacías.
@@ -94,6 +144,7 @@ class ControlEvento:
 
         # Cola (FIFO = First In, First Out): la fila en la puerta.
         # El primero que llega es el primero que entra, como en una fila real.
+        # Cada elemento es un Turno (asistente + evento al que va).
         self.fila = Cola()
 
         # Pila (LIFO = Last In, First Out): la bitácora de ingresos.
@@ -106,7 +157,7 @@ class ControlEvento:
         # a la derecha, así buscar un evento es rápido (O(log n) en promedio).
         self.catalogo = ArbolBST()
 
-        # Lista Doblemente Enlazada: la agenda del día.
+        # Lista Doblemente Enlazada: la agenda del día, en orden de hora.
         # Cada nodo apunta al siguiente y al anterior, así se puede recorrer
         # de inicio a fin y también de fin a inicio.
         self.agenda = ListaDoblementeEnlazada()
@@ -148,9 +199,9 @@ class ControlEvento:
         # La búsqueda la hace la Lista Enlazada (recorrido secuencial, O(n)).
         return self.padron.buscar(str(cedula).strip())
 
-    def esta_en_fila(self, cedula) -> bool:
+    def turno_en_fila(self, cedula):
         """
-        Indica si la persona ya está esperando en la fila.
+        Devuelve el Turno de esa persona si está esperando en la fila, o None.
         La Cola no tiene un método de búsqueda, así que se recorre nodo por
         nodo (solo lectura, sin sacar a nadie). La comparación usa la
         sobrecarga Asistente.__eq__, que acepta la cédula como texto.
@@ -160,15 +211,18 @@ class ControlEvento:
         # Empezamos en el primer nodo de la fila (el frente).
         actual = self.fila.frente
         while actual is not None:
-            # actual.dato es un Asistente. Gracias a __eq__ (sobrecarga del
-            # operador ==), comparar un Asistente con un texto compara su cédula.
-            if actual.dato == cedula:
-                return True
+            # actual.dato es un Turno; su asistente se compara con la cédula
+            # gracias a __eq__ (sobrecarga del operador ==).
+            if actual.dato.asistente == cedula:
+                return actual.dato
             # Avanzamos al siguiente nodo siguiendo la referencia.
             actual = actual.siguiente
 
         # Recorrimos toda la fila y no apareció.
-        return False
+        return None
+
+    def esta_en_fila(self, cedula) -> bool:
+        return self.turno_en_fila(cedula) is not None
 
     def eliminar_asistente(self, cedula) -> Resultado:
         """Quita del padrón a un asistente que no esté dentro ni en la fila."""
@@ -200,14 +254,47 @@ class ControlEvento:
         self.padron.mostrar()
 
     # ==================================================================
+    # CONTROL DE AFORO
+    # ==================================================================
+    # Cada Evento tiene una 'capacidad' (aforo máximo). Para saber cuántos
+    # cupos quedan se cuentan los turnos de ese evento en la bitácora
+    # (personas que ya entraron) y en la fila (personas que ya tienen su
+    # cupo apartado). Se cuenta recorriendo los nodos, sin estructuras extra.
+    def ingresados_a(self, evento) -> int:
+        """Cuántas personas han entrado a ese evento (turnos en la Pila)."""
+        cuenta = 0
+        actual = self.bitacora.tope
+        while actual is not None:
+            if actual.dato.evento == evento:
+                cuenta += 1
+            actual = actual.siguiente
+        return cuenta
+
+    def en_fila_para(self, evento) -> int:
+        """Cuántas personas esperan en la fila para ese evento (turnos en la Cola)."""
+        cuenta = 0
+        actual = self.fila.frente
+        while actual is not None:
+            if actual.dato.evento == evento:
+                cuenta += 1
+            actual = actual.siguiente
+        return cuenta
+
+    def cupos_disponibles(self, evento) -> int:
+        """Capacidad menos los que ya entraron y los que esperan en la fila."""
+        return evento.capacidad - self.ingresados_a(evento) - self.en_fila_para(evento)
+
+    # ==================================================================
     # TORNIQUETE (Cola = fila de espera, Pila = bitácora de ingresos)
     # ==================================================================
     # Flujo de una persona en la puerta:
-    #   1. llegar_a_fila()            -> se valida la cédula y entra a la Cola
-    #   2. dar_ingreso()              -> sale de la Cola, queda DENTRO y se apila
-    #   3. deshacer_ultimo_ingreso()  -> (si fue un error) sale de la Pila y queda FUERA
-    def llegar_a_fila(self, cedula) -> Resultado:
-        """La persona llega a la puerta: se valida su credencial y se encola."""
+    #   1. llegar_a_fila()            -> se valida la cédula, el evento y el cupo; entra a la Cola
+    #   2. dar_ingreso()              -> sale de la Cola, se vuelve a revisar el aforo,
+    #                                    queda DENTRO y se apila en la bitácora
+    #   3. deshacer_ultimo_ingreso()  -> (si fue un error) sale de la Pila, queda FUERA
+    #                                    y su cupo vuelve a estar libre
+    def llegar_a_fila(self, cedula, id_evento) -> Resultado:
+        """La persona llega a la puerta para un evento: se valida y se encola."""
         cedula = str(cedula).strip()
         asistente = self.padron.buscar(cedula)
 
@@ -224,42 +311,68 @@ class ControlEvento:
         if self.esta_en_fila(cedula):
             return Resultado(False, asistente.nombre + " ya está esperando en la fila.")
 
-        # encolar() lo agrega al FINAL de la Cola (el último en llegar).
-        self.fila.encolar(asistente)
-        return Resultado(True, asistente.nombre + " entró a la fila. Posición: "
-                         + str(self.fila.obtener_tamano()) + ".", asistente)
+        # El evento debe existir en el catálogo y estar programado en la agenda.
+        evento = self.buscar_evento(id_evento)
+        if evento is None:
+            return Resultado(False, "No existe un evento con el ID " + str(id_evento) + ".")
+        if not self.esta_en_agenda(evento.id_evento):
+            return Resultado(False, "El evento '" + evento.nombre + "' no está programado en la agenda.")
+
+        # Control de aforo: no se aparta un cupo que ya no existe.
+        if self.cupos_disponibles(evento) <= 0:
+            return Resultado(False, "Aforo completo: el evento '" + evento.nombre
+                             + "' ya tiene sus " + str(evento.capacidad) + " cupos ocupados o apartados.")
+
+        # encolar() agrega el turno al FINAL de la Cola (el último en llegar).
+        self.fila.encolar(Turno(asistente, evento))
+        return Resultado(True, asistente.nombre + " entró a la fila para '" + evento.nombre
+                         + "'. Posición: " + str(self.fila.obtener_tamano())
+                         + ". Cupos que quedan: " + str(self.cupos_disponibles(evento)) + ".", asistente)
 
     def ver_siguiente(self):
-        """Devuelve quién sigue en la fila sin sacarlo (o None)."""
+        """Devuelve el Turno que sigue en la fila sin sacarlo (o None)."""
         # ver_frente() solo mira el primer nodo; no lo saca de la Cola.
         return self.fila.ver_frente()
 
     def dar_ingreso(self) -> Resultado:
-        """Atiende al primero de la fila: entra al recinto y queda en la bitácora."""
+        """Atiende al primero de la fila: entra al evento y queda en la bitácora."""
         if self.fila.esta_vacia():
             return Resultado(False, "No hay nadie esperando en la fila.")
 
-        # 1. desencolar() saca a la persona del FRENTE de la Cola (FIFO).
-        asistente = self.fila.desencolar()
-        # 2. Se marca como DENTRO del recinto.
+        # 1. desencolar() saca el turno del FRENTE de la Cola (FIFO).
+        turno = self.fila.desencolar()
+        asistente = turno.asistente
+        evento = turno.evento
+
+        # 2. Segunda revisión del aforo, ya en el torniquete. Normalmente
+        #    siempre hay cupo porque se apartó al hacer la fila, pero se
+        #    revisa otra vez por seguridad.
+        if self.ingresados_a(evento) >= evento.capacidad:
+            return Resultado(False, "Aforo completo en '" + evento.nombre + "' ("
+                             + str(evento.capacidad) + " personas). " + asistente.nombre
+                             + " no puede entrar.", asistente)
+
+        # 3. Se marca como DENTRO y se registra en la bitácora (tope de la Pila).
         asistente.cambiar_estado_ingreso(True)
-        # 3. Se registra en la bitácora: apilar() lo pone en el TOPE de la Pila.
-        self.bitacora.apilar(asistente)
-        return Resultado(True, "Ingreso registrado: " + asistente.nombre
-                         + " (" + asistente.categoria + ").", asistente)
+        self.bitacora.apilar(turno)
+        return Resultado(True, "Ingreso registrado: " + asistente.nombre + " (" + asistente.categoria
+                         + ") a '" + evento.nombre + "'. Aforo: " + str(self.ingresados_a(evento))
+                         + "/" + str(evento.capacidad) + ".", asistente)
 
     def deshacer_ultimo_ingreso(self) -> Resultado:
         """Revierte el ingreso más reciente (tope de la pila): la persona queda FUERA."""
         if self.bitacora.esta_vacia():
             return Resultado(False, "No hay ingresos para deshacer.")
 
-        # desapilar() saca el elemento del TOPE: el último que entró (LIFO).
+        # desapilar() saca el turno del TOPE: el último que entró (LIFO).
         # Por eso la Pila es la estructura ideal para "deshacer".
-        asistente = self.bitacora.desapilar()
-        # Se revierte su estado: vuelve a quedar FUERA del recinto.
+        turno = self.bitacora.desapilar()
+        asistente = turno.asistente
+        # Se revierte su estado: vuelve a quedar FUERA, y como ya no está en la
+        # bitácora, su cupo en el evento queda libre otra vez.
         asistente.cambiar_estado_ingreso(False)
-        return Resultado(True, "Se deshizo el ingreso de " + asistente.nombre
-                         + ". Queda FUERA y puede volver a hacer la fila.", asistente)
+        return Resultado(True, "Se deshizo el ingreso de " + asistente.nombre + " a '"
+                         + turno.evento.nombre + "'. Queda FUERA y su cupo se libera.", asistente)
 
     def mostrar_fila(self):
         # Muestra la Cola del frente hacia el final.
@@ -273,12 +386,41 @@ class ControlEvento:
     # EVENTOS (Árbol BST = catálogo, Lista Doble = agenda)
     # ==================================================================
     # Un mismo objeto Evento se guarda en DOS estructuras a la vez:
-    #   - Catálogo (BST): registro permanente de todos los eventos, para
-    #     buscarlos rápido por ID y listarlos ordenados.
-    #   - Agenda (Lista Doble): los eventos programados, en el orden en que
-    #     se programaron, para recorrerlos adelante y atrás.
-    def registrar_evento(self, id_evento, nombre, capacidad, escenario) -> Resultado:
-        """Crea el evento en el catálogo (BST) y lo programa al final de la agenda."""
+    #   - Catálogo (BST): registro de todos los eventos, para buscarlos
+    #     rápido por ID y listarlos ordenados.
+    #   - Agenda (Lista Doble): los eventos programados, ordenados por hora,
+    #     para recorrerlos adelante y atrás.
+    def _programar_en_orden(self, evento):
+        """
+        Inserta el evento en la agenda en su lugar según la hora, para que la
+        agenda quede siempre en orden cronológico.
+
+        La Lista Doble trae insertar_final(); como aquí hay que insertar en
+        medio, se recorre la lista hasta el primer evento con una hora mayor
+        y el nodo nuevo se enlaza ANTES de él, ajustando los punteros
+        'anterior' y 'siguiente' de sus dos vecinos.
+        """
+        actual = self.agenda.cabeza
+        while actual is not None and actual.evento.hora <= evento.hora:
+            actual = actual.siguiente
+
+        # Si no hay ningún evento más tarde, va al final.
+        if actual is None:
+            self.agenda.insertar_final(evento)
+            return
+
+        nuevo = NodoDoble(evento)
+        nuevo.siguiente = actual
+        nuevo.anterior = actual.anterior
+        if actual.anterior is None:          # va de primero
+            self.agenda.cabeza = nuevo
+        else:
+            actual.anterior.siguiente = nuevo
+        actual.anterior = nuevo
+        self.agenda.tamanio += 1
+
+    def registrar_evento(self, id_evento, nombre, capacidad, escenario, hora) -> Resultado:
+        """Crea el evento en el catálogo (BST) y lo programa en la agenda según su hora."""
         # El ID y la capacidad deben ser números; a_entero devuelve None si no lo son.
         id_evento = a_entero(id_evento)
         capacidad = a_entero(capacidad)
@@ -287,6 +429,7 @@ class ControlEvento:
 
         nombre = str(nombre).strip()
         escenario = str(escenario).strip()
+        hora_valida = normalizar_hora(hora)
 
         # Validaciones de datos.
         if id_evento <= 0:
@@ -295,8 +438,10 @@ class ControlEvento:
             return Resultado(False, "La capacidad debe ser mayor que 0.")
         if nombre == "" or escenario == "":
             return Resultado(False, "El nombre y el escenario son obligatorios.")
+        if hora_valida is None:
+            return Resultado(False, "La hora debe tener el formato HH:MM de 24 horas (por ejemplo 14:00).")
 
-        evento = Evento(id_evento, nombre, capacidad, escenario)
+        evento = Evento(id_evento, nombre, capacidad, escenario, hora_valida)
 
         # insertar() del BST devuelve False si el ID ya existe (no hay duplicados).
         # Para ubicar el evento, el árbol usa las sobrecargas < y > de Evento.
@@ -305,9 +450,9 @@ class ControlEvento:
             return Resultado(False, "Ya existe un evento con el ID " + str(id_evento)
                              + ": " + existente.nombre + ".")
 
-        # Si se insertó en el catálogo, también se programa al final de la agenda.
+        # Si se insertó en el catálogo, también se programa en la agenda.
         self.total_eventos += 1
-        self.agenda.insertar_final(evento)
+        self._programar_en_orden(evento)
         return Resultado(True, "Evento registrado y programado en la agenda: " + str(evento), evento)
 
     def buscar_evento(self, id_evento):
@@ -327,6 +472,14 @@ class ControlEvento:
             return False
         return self.agenda.buscar_por_id(id_evento) is not None
 
+    def _tiene_personas(self, evento):
+        """Mensaje de error si alguien está dentro o en la fila para ese evento; '' si no."""
+        if self.ingresados_a(evento) > 0:
+            return "hay personas dentro de ese evento"
+        if self.en_fila_para(evento) > 0:
+            return "hay personas en la fila para ese evento"
+        return ""
+
     def retirar_de_agenda(self, id_evento) -> Resultado:
         """
         Quita un evento de la agenda (Lista Doble). El evento sigue en el
@@ -337,18 +490,21 @@ class ControlEvento:
         if evento is None:
             return Resultado(False, "No existe un evento con el ID " + str(id_evento) + ".")
 
+        # No se retira un evento al que todavía le esperan personas en la fila.
+        if self.en_fila_para(evento) > 0:
+            return Resultado(False, "No se puede retirar '" + evento.nombre
+                             + "': hay personas en la fila para ese evento.")
+
         # eliminar_por_id() de la Lista Doble reconecta los punteros anterior
         # y siguiente de los vecinos. Devuelve False si no estaba en la agenda.
         if not self.agenda.eliminar_por_id(evento.id_evento):
             return Resultado(False, "El evento '" + evento.nombre + "' no está en la agenda.")
 
-        # Nota: el ArbolBST no tiene método eliminar, por eso el evento se
-        # queda en el catálogo (y así se puede volver a programar).
         return Resultado(True, "Evento retirado de la agenda: " + evento.nombre
                          + ". Sigue en el catálogo.", evento)
 
     def programar_en_agenda(self, id_evento) -> Resultado:
-        """Vuelve a poner al final de la agenda un evento que ya existe en el catálogo."""
+        """Vuelve a poner en la agenda (en su hora) un evento que ya existe en el catálogo."""
         evento = self.buscar_evento(id_evento)
         if evento is None:
             return Resultado(False, "No existe un evento con el ID " + str(id_evento)
@@ -358,8 +514,30 @@ class ControlEvento:
         if self.esta_en_agenda(evento.id_evento):
             return Resultado(False, "El evento '" + evento.nombre + "' ya está en la agenda.")
 
-        self.agenda.insertar_final(evento)
-        return Resultado(True, "Evento programado al final de la agenda: " + evento.nombre + ".", evento)
+        self._programar_en_orden(evento)
+        return Resultado(True, "Evento programado en la agenda a las " + evento.hora
+                         + ": " + evento.nombre + ".", evento)
+
+    def eliminar_evento(self, id_evento) -> Resultado:
+        """
+        Borra un evento del todo: del catálogo (BST) y de la agenda (Lista Doble).
+        El BST resuelve los tres casos de eliminación (hoja, un hijo y dos
+        hijos con el sucesor inorden).
+        """
+        evento = self.buscar_evento(id_evento)
+        if evento is None:
+            return Resultado(False, "No existe un evento con el ID " + str(id_evento) + ".")
+
+        # No se borra un evento con personas dentro o esperando en la fila,
+        # porque sus turnos quedarían apuntando a un evento que no existe.
+        motivo = self._tiene_personas(evento)
+        if motivo != "":
+            return Resultado(False, "No se puede eliminar '" + evento.nombre + "': " + motivo + ".")
+
+        self.agenda.eliminar_por_id(evento.id_evento)   # puede que ya no estuviera en la agenda
+        self.catalogo.eliminar(evento.id_evento)
+        self.total_eventos -= 1
+        return Resultado(True, "Evento eliminado del catálogo y de la agenda: " + evento.nombre + ".", evento)
 
     def mostrar_catalogo(self):
         print("=== CATÁLOGO DE EVENTOS (ordenado por ID) ===")
@@ -385,18 +563,29 @@ class ControlEvento:
         print("  Personas en la fila           : " + str(self.fila.obtener_tamano()))
         # Cada ingreso queda en la bitácora y "deshacer" lo saca, así que el
         # tamaño de la pila es exactamente la cantidad de personas dentro.
-        print("  Personas dentro del recinto   : " + str(self.bitacora.obtener_tamano()))
+        print("  Personas dentro               : " + str(self.bitacora.obtener_tamano()))
 
         # Estos dos datos solo se muestran si hay alguien en la fila o en la bitácora.
         siguiente = self.fila.ver_frente()
         if siguiente is not None:
-            print("  Siguiente en la fila          : " + siguiente.nombre)
+            print("  Siguiente en la fila          : " + siguiente.asistente.nombre)
         ultimo = self.bitacora.ver_tope()
         if ultimo is not None:
-            print("  Último ingreso                : " + ultimo.nombre)
+            print("  Último ingreso                : " + ultimo.asistente.nombre)
 
         print("  Eventos en el catálogo        : " + str(self.total_eventos))
         print("  Eventos en la agenda          : " + str(self.agenda.tamanio))
+
+        # Aforo de cada evento programado, en el orden de la agenda.
+        if not self.agenda.esta_vacia():
+            print("  Aforo por evento (dentro / capacidad, en fila):")
+            actual = self.agenda.cabeza
+            while actual is not None:
+                e = actual.evento
+                print("    " + e.hora + "  " + str(e.id_evento) + " " + e.nombre.ljust(22)
+                      + str(self.ingresados_a(e)).rjust(3) + " / " + str(e.capacidad).ljust(4)
+                      + " en fila: " + str(self.en_fila_para(e)))
+                actual = actual.siguiente
 
     def cargar_datos_demo(self) -> Resultado:
         """Carga asistentes y eventos de ejemplo para probar o sustentar el proyecto."""
@@ -417,24 +606,27 @@ class ControlEvento:
         if self.inscribir_asistente("55555", "Sofía Herrera", "VIP").exito:
             asistentes += 1
 
-        # Se registran desordenados a propósito: la agenda conserva el orden
-        # de programación y el catálogo (BST) los muestra ordenados por ID.
+        # Se registran desordenados a propósito (por ID y por hora): el
+        # catálogo (BST) los muestra ordenados por ID y la agenda los ubica
+        # sola en orden de hora. El Taller de Python tiene solo 3 cupos para
+        # poder mostrar el control de aforo con los 5 asistentes de prueba.
         eventos = 0
-        if self.registrar_evento(105, "Apertura y Registro", 300, "Auditorio Principal").exito:
+        if self.registrar_evento(110, "Cierre y Premiación", 300, "Auditorio Principal", "17:00").exito:
             eventos += 1
-        if self.registrar_evento(102, "Taller de Python", 40, "Sala 2").exito:
+        if self.registrar_evento(102, "Taller de Python", 3, "Sala 2", "10:00").exito:
             eventos += 1
-        if self.registrar_evento(108, "Ponencia de IA", 150, "Sala 1").exito:
+        if self.registrar_evento(101, "Feria de Proyectos", 200, "Plaza Central", "14:00").exito:
             eventos += 1
-        if self.registrar_evento(101, "Feria de Proyectos", 200, "Plaza Central").exito:
+        if self.registrar_evento(105, "Apertura y Registro", 300, "Auditorio Principal", "08:00").exito:
             eventos += 1
-        if self.registrar_evento(110, "Cierre y Premiación", 300, "Auditorio Principal").exito:
+        if self.registrar_evento(108, "Ponencia de IA", 150, "Sala 1", "11:30").exito:
             eventos += 1
 
         self.datos_demo_cargados = True
         mensaje = ("Datos cargados: " + str(asistentes) + " de 5 asistentes "
                    "(cédulas 11111, 22222, 33333, 44444, 55555) y "
-                   + str(eventos) + " de 5 eventos (IDs 101, 102, 105, 108, 110).")
+                   + str(eventos) + " de 5 eventos (105 a las 08:00, 102 a las 10:00, "
+                   "108 a las 11:30, 101 a las 14:00 y 110 a las 17:00).")
         if asistentes < 5 or eventos < 5:
             mensaje += " Los que ya existían se omitieron."
         return Resultado(True, mensaje)

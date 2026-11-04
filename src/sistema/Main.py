@@ -31,7 +31,7 @@ if RAIZ_PROYECTO not in sys.path:
     sys.path.insert(0, RAIZ_PROYECTO)
 
 # ControlEvento tiene toda la lógica; a_entero se reutiliza para validar números.
-from src.sistema.ControlEvento import ControlEvento, a_entero
+from src.sistema.ControlEvento import ControlEvento, a_entero, normalizar_hora
 
 
 # ======================================================================
@@ -99,6 +99,15 @@ def leer_cedula(mensaje="Cédula: "):
         if cedula.isdigit() and len(cedula) >= 5 and len(cedula) <= 12:
             return cedula
         print("  La cédula debe tener solo números (entre 5 y 12 dígitos).")
+
+
+def leer_hora(mensaje="Hora (HH:MM, 24 horas): "):
+    """Pide una hora válida como 08:00 o 14:30 y la devuelve con dos dígitos."""
+    while True:
+        hora = normalizar_hora(input(mensaje))
+        if hora is not None:
+            return hora
+        print("  Escriba la hora como HH:MM en formato 24 horas, por ejemplo 14:00.")
 
 
 def leer_categoria():
@@ -177,11 +186,13 @@ def menu_asistentes(control):
 # ----------------------------------------------------------------------
 # Simula la puerta del evento:
 #   Llegada (encolar) -> Dar ingreso (desencolar + apilar) -> Deshacer (desapilar)
+# Cada persona elige a qué evento entra, y no pasa si ese evento ya llenó
+# su capacidad (control de aforo).
 # ======================================================================
 def menu_torniquete(control):
     while True:
         titulo("TORNIQUETE  ·  Fila (Cola) y Bitácora (Pila)")
-        print("  1. Llegada a la fila (validar credencial)")
+        print("  1. Llegada a la fila (validar credencial y aforo)")
         print("  2. Ver quién sigue en la fila")
         print("  3. Dar ingreso al siguiente")
         print("  4. Ver fila de espera")
@@ -192,9 +203,12 @@ def menu_torniquete(control):
         opcion = input("Opción: ").strip()
 
         if opcion == "1":
-            # Solo entra a la Cola si está inscrito, no está dentro y no está ya en la fila.
+            # Solo entra a la Cola si está inscrito, no está dentro, no está ya
+            # en la fila y el evento elegido todavía tiene cupos (aforo).
             cedula = leer_cedula("Cédula de quien llega: ")
-            mostrar_resultado(control.llegar_a_fila(cedula))
+            control.mostrar_agenda_adelante()
+            id_evento = leer_entero("ID del evento al que va a entrar: ")
+            mostrar_resultado(control.llegar_a_fila(cedula, id_evento))
             pausa()
         elif opcion == "2":
             # Mira el frente de la Cola sin sacar a nadie.
@@ -227,8 +241,8 @@ def menu_torniquete(control):
 # ======================================================================
 # Submenú 3: Eventos (Árbol BST + Lista Doblemente Enlazada)
 # ----------------------------------------------------------------------
-# Catálogo (BST): buscar por ID y listar ordenado.
-# Agenda (Lista Doble): ver adelante/atrás, retirar y volver a programar.
+# Catálogo (BST): buscar por ID, listar ordenado y eliminar.
+# Agenda (Lista Doble): ver adelante/atrás en orden de hora, retirar y volver a programar.
 # ======================================================================
 def menu_eventos(control):
     while True:
@@ -240,17 +254,19 @@ def menu_eventos(control):
         print("  5. Ver agenda en reversa (fin -> inicio)")
         print("  6. Retirar evento de la agenda")
         print("  7. Volver a programar un evento en la agenda")
+        print("  8. Eliminar evento (del catálogo y de la agenda)")
         print("  0. Volver al menú principal")
         linea()
         opcion = input("Opción: ").strip()
 
         if opcion == "1":
-            # Registrar: se guarda en el BST y al final de la agenda.
+            # Registrar: se guarda en el BST y en la agenda según su hora.
             id_evento = leer_entero("ID del evento: ")
             nombre = leer_texto("Nombre del evento: ")
             capacidad = leer_entero("Capacidad (aforo): ")
             escenario = leer_texto("Escenario: ")
-            mostrar_resultado(control.registrar_evento(id_evento, nombre, capacidad, escenario))
+            hora = leer_hora()
+            mostrar_resultado(control.registrar_evento(id_evento, nombre, capacidad, escenario, hora))
             pausa()
         elif opcion == "2":
             # Buscar: el BST baja por la izquierda o la derecha según el ID.
@@ -284,9 +300,14 @@ def menu_eventos(control):
             mostrar_resultado(control.retirar_de_agenda(id_evento))
             pausa()
         elif opcion == "7":
-            # Lo vuelve a poner al final de la agenda.
+            # Lo vuelve a poner en la agenda, en el lugar que le toca por su hora.
             id_evento = leer_entero("ID del evento a programar: ")
             mostrar_resultado(control.programar_en_agenda(id_evento))
+            pausa()
+        elif opcion == "8":
+            # Lo borra del BST (eliminar con sus 3 casos) y de la agenda.
+            id_evento = leer_entero("ID del evento a eliminar: ")
+            mostrar_resultado(control.eliminar_evento(id_evento))
             pausa()
         elif opcion == "0":
             return
